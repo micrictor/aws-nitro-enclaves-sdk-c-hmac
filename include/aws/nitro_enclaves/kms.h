@@ -41,6 +41,14 @@ enum aws_encryption_algorithm {
     AWS_EA_RSAES_OAEP_SHA_1,
     /* RSAES_OAEP_SHA_256 algorithm. */
     AWS_EA_RSAES_OAEP_SHA_256,
+    /* HMAC_SHA_224 algorithm. */
+    AWS_EA_HMAC_SHA_224,
+    /* HMAC_SHA_256 algorithm. */
+    AWS_EA_HMAC_SHA_256,
+    /* HMAC_SHA_384 algorithm. */
+    AWS_EA_HMAC_SHA_384,
+    /* HMAC_SHA_512 algorithm. */
+    AWS_EA_HMAC_SHA_512,
 };
 
 /**
@@ -464,6 +472,89 @@ struct aws_kms_generate_random_response {
      * Required: No.
      */
     struct aws_byte_buf ciphertext_for_recipient;
+
+    /**
+     * Allocator used for memory management of associated resources.
+     *
+     * Note that this is not part of the response.
+     */
+    struct aws_allocator *const allocator;
+};
+
+/**
+ * The generate MAC request.
+ */
+struct aws_kms_generate_mac_request {
+    /**
+     * Message to be hashed.
+     *
+     * Required: Yes.
+     */
+    struct aws_byte_buf message;
+
+    /**
+     * Specifies the encryption algorithm that AWS KMS will use to encrypt the plaintext message.
+     * The algorithm must be compatible with the CMK that you specify.
+     *
+     * Required: Yes.
+     */
+    enum aws_encryption_algorithm mac_algorithm;
+
+    /**
+     * A list of grant tokens.
+     *
+     * For more information, see
+     * <a href="https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#grant_token">Grant Tokens</a>
+     * in the AWS Key Management Service Developer Guide.
+     *
+     * Required: No.
+     */
+    struct aws_array_list grant_tokens;
+
+    /**
+     * A unique identifier for the customer master key (CMK).
+     *
+     * To specify a CMK, use its key ID, Amazon Resource Name (ARN),
+     * alias name, or alias ARN. When using an alias name,
+     * prefix it with "alias/". To specify a CMK in a different AWS account,
+     * you must use the key ARN or alias ARN.
+     *
+     * Required: Yes.
+     */
+    struct aws_string *key_id;
+
+    /**
+     * Allocator used for memory management of associated resources.
+     *
+     * Note that this is not part of the request.
+     */
+    struct aws_allocator *const allocator;
+};
+
+/**
+ * The generate MAC response.
+ */
+struct aws_kms_generate_mac_response {
+    /**
+     * The identifier of the CMK under which the data encryption key was generated and encrypted.
+     *
+     * Required: Yes.
+     */
+    struct aws_string *key_id;
+
+    /**
+     * The generated MAC.
+     *
+     * Required: Yes.
+     */
+    struct aws_byte_buf mac;
+
+    /**
+     * The algorithm used to generate the MAC.
+     *
+     * Required: Yes.
+     */
+    enum aws_encryption_algorithm mac_algorithm;
 
     /**
      * Allocator used for memory management of associated resources.
@@ -915,6 +1006,88 @@ AWS_NITRO_ENCLAVES_API
 void aws_kms_generate_random_response_destroy(struct aws_kms_generate_random_response *res);
 
 /**
+ * Creates an aws_kms_generate_mac_request structure.
+ *
+ * @param[in]  allocator  The allocator used for initialization. NULL for default.
+ *
+ * @return                A new aws_kms_generate_mac_request structure.
+ */
+AWS_NITRO_ENCLAVES_API
+struct aws_kms_generate_mac_request *aws_kms_generate_mac_request_new(struct aws_allocator *allocator);
+
+/**
+ * Serializes a KMS Generate Random Request @ref aws_kms_generate_mac_request to json.
+ *
+ * @param[in]   req       The KMS Generate Random Request that is to be serialized.
+ *
+ * @return                The serialized KMS Generate Random Request.
+ */
+AWS_NITRO_ENCLAVES_API
+struct aws_string *aws_kms_generate_mac_request_to_json(const struct aws_kms_generate_mac_request *req);
+
+/**
+ * Deserialized a KMS Generate Random Request @ref aws_kms_generate_mac_request from json.
+ *
+ * @param[in]   allocator  The allocator used for managing resource creation. NULL for default.
+ * @param[in]   json       The serialized json KMS Generate Random Request.
+ *
+ * @return                 A new aws_kms_generate_mac_request structure.
+ */
+AWS_NITRO_ENCLAVES_API
+struct aws_kms_generate_mac_request *aws_kms_generate_mac_request_from_json(
+    struct aws_allocator *allocator,
+    const struct aws_string *json);
+
+/**
+ * Deallocate all internal data for a KMS Generate Random Request.
+ *
+ * @param[in]  req  The KMS Generate Random Request.
+ */
+AWS_NITRO_ENCLAVES_API
+void aws_kms_generate_mac_request_destroy(struct aws_kms_generate_mac_request *req);
+
+/**
+ * Creates an aws_kms_generate_mac_response structure.
+ *
+ * @param[in]  allocator  The allocator used for initialization. NULL for default.
+ *
+ * @return                A new aws_kms_generate_mac_response structure.
+ */
+AWS_NITRO_ENCLAVES_API
+struct aws_kms_generate_mac_response *aws_kms_generate_mac_response_new(struct aws_allocator *allocator);
+
+/**
+ * Serializes a KMS Generate Random Response @ref aws_kms_generate_mac_response to json.
+ *
+ * @param[in]   res       The KMS Generate Random Response that is to be serialized.
+ *
+ * @return                The serialized KMS Generate Random Response.
+ */
+AWS_NITRO_ENCLAVES_API
+struct aws_string *aws_kms_generate_mac_response_to_json(const struct aws_kms_generate_mac_response *res);
+
+/**
+ * Deserialized a KMS Generate Random Response @ref aws_kms_generate_mac_response from json.
+ *
+ * @param[in]   allocator  The allocator used for managing resource creation. NULL for default.
+ * @param[in]   json       The serialized json KMS Generate Random Response.
+ *
+ * @return                 A new aws_kms_generate_mac_response structure.
+ */
+AWS_NITRO_ENCLAVES_API
+struct aws_kms_generate_mac_response *aws_kms_generate_mac_response_from_json(
+    struct aws_allocator *allocator,
+    const struct aws_string *json);
+
+/**
+ * Deallocate all internal data for a KMS Generate Random Response.
+ *
+ * @param[in]  res  The KMS Generate Random Response.
+ */
+AWS_NITRO_ENCLAVES_API
+void aws_kms_generate_mac_response_destroy(struct aws_kms_generate_mac_response *res);
+
+/**
  * Create a default KMS client configuration.
  * Uses the library default allocator.
  * uses explicit credentials instead of a credential provider.
@@ -1039,6 +1212,26 @@ int aws_kms_generate_random_blocking(
     struct aws_nitro_enclaves_kms_client *client,
     uint32_t number_of_bytes,
     struct aws_byte_buf *plaintext /* TODO: err_reason */);
+
+
+/**
+ * Call [AWS KMS GenerateMac API](https://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateMac.html).
+ * This function blocks and waits for the reply.
+ * This function generates an Attestation Document and calls AWS KMS with enclave-specific parameters.
+ * Calling it from a non-enclave environment will fail.
+ *
+ * @param[in]   client          The AWS KMS client to use for calling the API.
+ * @param[in]   number_of_bytes The number of random bytes to generate.
+ * @param[out]  plaintext       The plaintext output of the call. Should be an empty, but non-null aws_byte_buf.
+ * @return                      Returns AWS_OP_SUCCESS if the call succeeds and plaintext is populated.
+ */
+AWS_NITRO_ENCLAVES_API
+int aws_kms_generate_mac_blocking(
+    struct aws_nitro_enclaves_kms_client *client,
+     const struct aws_string *key_id,
+    const struct aws_string *mac_algoritm,
+    const struct aws_byte_buf *message,
+    struct aws_byte_buf *mac /* TODO: err_reason */);
 
 AWS_EXTERN_C_END
 

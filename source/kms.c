@@ -27,6 +27,9 @@
 #define KMS_NUMBER_OF_BYTES "NumberOfBytes"
 #define KMS_KEY_SPEC "KeySpec"
 #define KMS_CUSTOM_KEY_STORE_ID "CustomKeyStoreId"
+#define KMS_MAC "Mac"
+#define KMS_MAC_ALGORITHM "MacAlgorithm"
+#define KMS_MESSAGE "Message"
 
 /**
  * Helper macro for safe comparing a C string with a C string literal.
@@ -40,6 +43,10 @@
 AWS_STATIC_STRING_FROM_LITERAL(s_ea_symmetric_default, "SYMMETRIC_DEFAULT");
 AWS_STATIC_STRING_FROM_LITERAL(s_ea_rsaes_oaep_sha_1, "RSAES_OAEP_SHA_1");
 AWS_STATIC_STRING_FROM_LITERAL(s_ea_rsaes_oaep_sha_256, "RSAES_OAEP_SHA_256");
+AWS_STATIC_STRING_FROM_LITERAL(s_ea_hmac_sha_224, "AWS_EA_HMAC_SHA_224");
+AWS_STATIC_STRING_FROM_LITERAL(s_ea_hmac_sha_256, "AWS_EA_HMAC_SHA_256");
+AWS_STATIC_STRING_FROM_LITERAL(s_ea_hmac_sha_384, "AWS_EA_HMAC_SHA_384");
+AWS_STATIC_STRING_FROM_LITERAL(s_ea_hmac_sha_512, "AWS_EA_HMAC_SHA_512");
 
 /**
  * Aws string values for the AWS Key Encryption Algorithm used by KMS.
@@ -82,6 +89,26 @@ static bool s_aws_encryption_algorithm_from_aws_string(
         return true;
     }
 
+    if (aws_string_compare(str, s_ea_hmac_sha_224) == 0) {
+        *encryption_algorithm = AWS_EA_HMAC_SHA_224;
+        return true;
+    }
+
+    if (aws_string_compare(str, s_ea_hmac_sha_256) == 0) {
+        *encryption_algorithm = AWS_EA_HMAC_SHA_256;
+        return true;
+    }
+
+    if (aws_string_compare(str, s_ea_hmac_sha_384) == 0) {
+        *encryption_algorithm = AWS_EA_HMAC_SHA_384;
+        return true;
+    }
+
+    if (aws_string_compare(str, s_ea_hmac_sha_512) == 0) {
+        *encryption_algorithm = AWS_EA_HMAC_SHA_512;
+        return true;
+    }
+
     return false;
 }
 
@@ -102,6 +129,14 @@ static const struct aws_string *s_aws_encryption_algorithm_to_aws_string(
             return s_ea_rsaes_oaep_sha_1;
         case AWS_EA_RSAES_OAEP_SHA_256:
             return s_ea_rsaes_oaep_sha_256;
+        case AWS_EA_HMAC_SHA_224:
+            return s_ea_hmac_sha_224;
+        case AWS_EA_HMAC_SHA_256:
+            return s_ea_hmac_sha_256;
+        case AWS_EA_HMAC_SHA_384:
+            return s_ea_hmac_sha_384;
+        case AWS_EA_HMAC_SHA_512:
+            return s_ea_hmac_sha_512;
 
         case AWS_EA_UNINITIALIZED:
         default:
@@ -2018,6 +2053,284 @@ clean_up:
     return NULL;
 }
 
+struct aws_string *aws_kms_generate_mac_request_to_json(const struct aws_kms_generate_mac_request *req) {
+    AWS_PRECONDITION(req);
+    AWS_PRECONDITION(aws_allocator_is_valid(req->allocator));
+
+    struct json_object *obj = json_object_new_object();
+    if (obj == NULL) {
+        return NULL;
+    }
+
+    /* Required parameters. */
+    if (s_string_to_json(obj, KMS_KEY_ID, aws_string_c_str(res->key_id)) != AWS_OP_SUCCESS) {
+        goto clean_up;
+    }
+
+    if (res->mac_algorithm != AWS_EA_UNINITIALIZED) {
+        const struct aws_string *mac_algorithm =
+            s_aws_encryption_algorithm_to_aws_string(res->mac_algorithm);
+        if (mac_algorithm == NULL) {
+            goto clean_up;
+        }
+
+        if (s_string_to_json(obj, KMS_MAC_ALGORITHM, aws_string_c_str(mac_algorithm)) != AWS_OP_SUCCESS) {
+            goto clean_up;
+        }
+    }
+
+    if (res->message.buffer != NULL) {
+        if (s_aws_byte_buf_to_base64_json(res->allocator, obj, KMS_MESSAGE, &res->message) != AWS_OP_SUCCESS) {
+            goto clean_up;
+        }
+    }
+
+    /* Optional parameter. */
+    if (aws_array_list_is_valid(&req->grant_tokens) && aws_array_list_length(&req->grant_tokens) != 0) {
+        if (s_aws_array_list_to_json(obj, KMS_GRANT_TOKENS, &req->grant_tokens) != AWS_OP_SUCCESS) {
+            goto clean_up;
+        }
+    }
+
+    struct aws_string *json = s_aws_string_from_json(req->allocator, obj);
+    if (json == NULL) {
+        goto clean_up;
+    }
+
+    json_object_put(obj);
+    return json;
+
+clean_up:
+    json_object_put(obj);
+
+    return NULL;
+}
+
+struct aws_kms_generate_mac_request *aws_kms_generate_mac_request_from_json(
+    struct aws_allocator *allocator,
+    const struct aws_string *json) {
+
+    if (allocator == NULL) {
+        allocator = aws_nitro_enclaves_get_allocator();
+    }
+
+    AWS_PRECONDITION(aws_allocator_is_valid(allocator));
+    AWS_PRECONDITION(aws_string_is_valid(json));
+
+    struct json_object *obj = s_json_object_from_string(json);
+    if (obj == NULL) {
+        return NULL;
+    }
+
+    struct aws_kms_generate_mac_request *request = aws_kms_generate_mac_request_new(allocator);
+    if (request == NULL) {
+        json_object_put(obj);
+        return NULL;
+    }
+
+    struct json_object_iterator it_end = json_object_iter_end(obj);
+    for (struct json_object_iterator it = json_object_iter_begin(obj); !json_object_iter_equal(&it, &it_end);
+         json_object_iter_next(&it)) {
+        const char *key = json_object_iter_peek_name(&it);
+        struct json_object *value = json_object_iter_peek_value(&it);
+        int value_type = json_object_get_type(value);
+
+        if (value_type == json_type_string) {
+            if (AWS_SAFE_COMPARE(key, KMS_KEY_ID)) {
+                req->key_id = s_aws_string_from_json(allocator, value);
+                if (req->key_id == NULL) {
+                    goto clean_up;
+                }
+                continue;
+            }
+
+            if (AWS_SAFE_COMPARE(key, KMS_MESSAGE)) {
+                if (s_aws_byte_buf_from_base64_json(allocator, value, &req->message) != AWS_OP_SUCCESS) {
+                    goto clean_up;
+                }
+                continue;
+            }
+
+            if (AWS_SAFE_COMPARE(key, KMS_MAC_ALGORITHM)) {
+                struct aws_string *str = s_aws_string_from_json(allocator, value);
+                if (str == NULL) {
+                    goto clean_up;
+                }
+
+                if (!s_aws_encryption_algorithm_from_aws_string(str, &req->mac_algorithm)) {
+                    aws_string_destroy(str);
+                    goto clean_up;
+                }
+
+                aws_string_destroy(str);
+                continue;
+            }
+
+            /* Unexpected key for object type. */
+            goto clean_up;
+        }
+
+        if (value_type == json_type_array) {
+            if (AWS_SAFE_COMPARE(key, KMS_GRANT_TOKENS)) {
+                if (s_aws_array_list_from_json(allocator, value, &req->grant_tokens) != AWS_OP_SUCCESS) {
+                    goto clean_up;
+                }
+                continue;
+            }
+
+            /* Unexpected key for array type. */
+            goto clean_up;
+        }
+
+
+        /* Unexpected value type. */
+        goto clean_up;
+    }
+
+    /* Validate required parametrs. */
+    if (req->message.buffer == NULL
+        || !aws_byte_buf_is_valid(&req->message)
+        || req->key_id == NULL
+        || req->encryption_algorithm == NULL) {
+        goto clean_up;
+    }
+
+    json_object_put(obj);
+
+    return request;
+
+clean_up:
+    json_object_put(obj);
+    aws_kms_generate_mac_request_destroy(request);
+
+    return NULL;
+}
+
+struct aws_string *aws_kms_generate_mac_response_to_json(const struct aws_kms_generate_mac_response *res) {
+    AWS_PRECONDITION(res);
+    AWS_PRECONDITION(aws_allocator_is_valid(res->allocator));
+
+    struct json_object *obj = json_object_new_object();
+    if (obj == NULL) {
+        return NULL;
+    }
+
+    if (s_string_to_json(obj, KMS_KEY_ID, aws_string_c_str(res->key_id)) != AWS_OP_SUCCESS) {
+        goto clean_up;
+    }
+
+    if (res->mac_algorithm != AWS_EA_UNINITIALIZED) {
+        const struct aws_string *mac_algorithm =
+            s_aws_encryption_algorithm_to_aws_string(res->mac_algorithm);
+        if (mac_algorithm == NULL) {
+            goto clean_up;
+        }
+
+        if (s_string_to_json(obj, KMS_MAC_ALGORITHM, aws_string_c_str(mac_algorithm)) != AWS_OP_SUCCESS) {
+            goto clean_up;
+        }
+    }
+
+    if (res->mac.buffer != NULL) {
+        if (s_aws_byte_buf_to_base64_json(res->allocator, obj, KMS_MAC, &res->mac) != AWS_OP_SUCCESS) {
+            goto clean_up;
+        }
+    }
+
+    struct aws_string *json = s_aws_string_from_json(res->allocator, obj);
+    if (json == NULL) {
+        goto clean_up;
+    }
+
+    json_object_put(obj);
+    return json;
+
+clean_up:
+    json_object_put(obj);
+
+    return NULL;
+}
+
+struct aws_kms_generate_mac_response *aws_kms_generate_mac_response_from_json(
+    struct aws_allocator *allocator,
+    const struct aws_string *json) {
+
+    if (allocator == NULL) {
+        allocator = aws_nitro_enclaves_get_allocator();
+    }
+
+    AWS_PRECONDITION(aws_allocator_is_valid(allocator));
+    AWS_PRECONDITION(aws_string_is_valid(json));
+
+    struct json_object *obj = s_json_object_from_string(json);
+    if (obj == NULL) {
+        return NULL;
+    }
+
+    struct aws_kms_generate_mac_response *response = aws_kms_generate_mac_response_new(allocator);
+    if (response == NULL) {
+        json_object_put(obj);
+        return NULL;
+    }
+
+    struct json_object_iterator it_end = json_object_iter_end(obj);
+    for (struct json_object_iterator it = json_object_iter_begin(obj); !json_object_iter_equal(&it, &it_end);
+         json_object_iter_next(&it)) {
+        const char *key = json_object_iter_peek_name(&it);
+        struct json_object *value = json_object_iter_peek_value(&it);
+        int value_type = json_object_get_type(value);
+
+        if (AWS_SAFE_COMPARE(key, KMS_MAC)) {
+            if (value_type != json_type_string) {
+                goto clean_up;
+            }
+            if (s_aws_byte_buf_from_base64_json(allocator, value, &response->mac) != AWS_OP_SUCCESS) {
+                goto clean_up;
+            }
+            continue;
+        }
+
+        if (AWS_SAFE_COMPARE(key, KMS_KEY_ID)) {
+            if (value_type != json_type_string) {
+                goto clean_up;
+            }
+            req->key_id = s_aws_string_from_json(allocator, value);
+            if (req->key_id == NULL) {
+                goto clean_up;
+            }
+            continue;
+        }
+
+        if (AWS_SAFE_COMPARE(key, KMS_MAC_ALGORITHM)) {
+            if (value_type != json_type_string) {
+                goto clean_up;
+            }
+            struct aws_string *str = s_aws_string_from_json(allocator, value);
+            if (str == NULL) {
+                goto clean_up;
+            }
+
+            if (!s_aws_encryption_algorithm_from_aws_string(str, &req->mac_algoritm)) {
+                aws_string_destroy(str);
+                goto clean_up;
+            }
+
+            aws_string_destroy(str);
+            continue;
+        }
+    }
+
+    json_object_put(obj);
+
+    return response;
+
+clean_up:
+    json_object_put(obj);
+    aws_kms_generate_mac_response_destroy(response);
+
+    return NULL;
+}
+
 struct aws_recipient *aws_recipient_new(struct aws_allocator *allocator) {
     if (allocator == NULL) {
         allocator = aws_nitro_enclaves_get_allocator();
@@ -2609,6 +2922,8 @@ static struct aws_byte_cursor kms_target_generate_data_key =
     AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("TrentService.GenerateDataKey");
 static struct aws_byte_cursor kms_target_generate_random =
     AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("TrentService.GenerateRandom");
+    static struct aws_byte_cursor kms_target_generate_mac =
+    AWS_BYTE_CUR_INIT_FROM_STRING_LITERAL("TrentService.GenerateMac");
 
 int aws_kms_decrypt_blocking(
     struct aws_nitro_enclaves_kms_client *client,
@@ -2867,6 +3182,67 @@ int aws_kms_generate_random_blocking(
 err_clean:
     aws_kms_generate_random_request_destroy(request_structure);
     aws_kms_generate_random_response_destroy(response_structure);
+    aws_string_destroy(request);
+    aws_string_destroy(response);
+    return AWS_OP_ERR;
+}
+
+int aws_kms_generate_mac_blocking(
+    struct aws_nitro_enclaves_kms_client *client,
+    const struct aws_string *key_id,
+    const struct aws_string *mac_algoritm,
+    const struct aws_byte_buf *message,
+    struct aws_byte_buf *mac
+    /* TODO: err_reason */) {
+    AWS_PRECONDITION(client != NULL);
+    AWS_PRECONDITION(key_id != NULL);
+    AWS_PRECONDITION(mac_algoritm != NULL);
+    AWS_PRECONDITION(message != NULL);
+    AWS_PRECONDITION(mac != NULL);
+
+    struct aws_string *response = NULL;
+    struct aws_string *request = NULL;
+    struct aws_kms_generate_mac_response *response_structure = NULL;
+    struct aws_kms_generate_mac_request *request_structure = NULL;
+    int rc = 0;
+
+    request_structure = aws_kms_generate_mac_request_new(client->allocator);
+    if (request_structure == NULL) {
+        return AWS_OP_ERR;
+    }
+
+    aws_byte_buf_init_copy(&request_structure->message, client->allocator, message);
+    request_structure->key_id = aws_string_clone_or_reuse(client->allocator, key_id);
+    request_structure->mac_algorithm = aws_string_clone_or_reuse(client->allocator, mac_algoritm);
+
+    request = aws_kms_generate_mac_request_to_json(request_structure);
+    if (request == NULL) {
+        goto err_clean;
+    }
+
+    rc = s_aws_nitro_enclaves_kms_client_call_blocking(client, kms_target_generate_mac, request, &response);
+    if (rc != 200) {
+        fprintf(stderr, "Got non-200 answer from KMS: %d\n", rc);
+        goto err_clean;
+    }
+
+    response_structure = aws_kms_generate_mac_response_from_json(client->allocator, response);
+    if (response_structure == NULL) {
+        fprintf(stderr, "Could not read response from KMS: %d\n", rc);
+        goto err_clean;
+    }
+
+    aws_byte_buf_init_copy(mac, client->allocator, &response_structure->mac);
+
+    aws_kms_generate_mac_request_destroy(request_structure);
+    aws_kms_generate_mac_response_destroy(response_structure);
+    aws_string_destroy(request);
+    aws_string_destroy(response);
+
+    return AWS_OP_SUCCESS;
+err_clean:
+    aws_kms_generate_mac_request_destroy(request_structure);
+    aws_kms_generate_mac_response_destroy(response_structure);
     aws_string_destroy(request);
     aws_string_destroy(response);
     return AWS_OP_ERR;
